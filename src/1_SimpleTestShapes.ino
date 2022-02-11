@@ -3,16 +3,32 @@
 // on a 64x32 LED matrix
 //
 
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
-#include <AnimatedGIF.h>
-#include <ArduinoJson.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
+// Template ID, Device Name and Auth Token are provided by the Blynk.Cloud
+// See the Device Info tab, or Template settings
+#define BLYNK_TEMPLATE_ID "TMPLZcLFFUMf"
+#define BLYNK_DEVICE_NAME "AuthLab IoT"
+#define BLYNK_AUTH_TOKEN  "IQfGFrAQNdbWVqRyNQoOj-Eg_2d8nLv9"
 
+#define BLYNK_FIRMWARE_VERSION "0.0.3"
+
+
+// Comment this out to disable prints and save space
+#define BLYNK_PRINT Serial
+
+#define APP_DEBUG
 
 #define PANEL_RES_X 64 // Number of pixels wide of each INDIVIDUAL panel module.
 #define PANEL_RES_Y 64 // Number of pixels tall of each INDIVIDUAL panel module.
 #define PANEL_CHAIN 2  // Total number of panels chained one to another
+
+
+#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include <AnimatedGIF.h>
+#include <ArduinoJson.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <HTTPClient.h>
+#include "BlynkEdgent.h"
 
 
 //Your Domain name with URL path or IP address with path
@@ -41,6 +57,130 @@ TaskHandle_t Task2;
 
 uint8_t wheelval = 0;
 
+
+char auth[] = BLYNK_AUTH_TOKEN;
+
+// Your WiFi credentials.
+// Set password to "" for open networks.
+char ssid[] = "Hr Delwar";
+char pass[] = "1234567809";
+
+BlynkTimer timer;
+
+// Allocate the JSON document
+//
+// Inside the brackets, 200 is the capacity of the memory pool in bytes.
+// Don't forget to change this value to match your JSON document.
+// Use arduinojson.org/v6/assistant to compute the capacity.
+StaticJsonDocument<200> doc;
+String sensorReadings;
+
+String lines[] = {"TICKET:---", "REPLY :---", "REVIEW:---"};
+int scrollShift = 0;
+String scollingText = "";
+
+// This function is called every time the device is connected to the Blynk.Cloud
+BLYNK_CONNECTED()
+{
+  // Change Web Link Button message to "Congratulations!"
+  Blynk.setProperty(V3, "offImageUrl", "https://static-image.nyc3.cdn.digitaloceanspaces.com/general/fte/congratulations.png");
+  Blynk.setProperty(V3, "onImageUrl",  "https://static-image.nyc3.cdn.digitaloceanspaces.com/general/fte/congratulations_pressed.png");
+  Blynk.setProperty(V3, "url", "https://docs.blynk.io/en/getting-started/what-do-i-need-to-blynk/how-quickstart-device-was-made");
+}
+
+String httpGETRequest(const char* serverName) {
+  HTTPClient http;
+    
+  // Your Domain name with URL path or IP address with path
+  http.begin(serverName);
+  
+  // Send HTTP POST request
+  int httpResponseCode = http.GET();
+  
+  String payload = "{}";
+  
+  if (httpResponseCode>0) {
+    BLYNK_PRINT.print("HTTP Response code: ");
+    BLYNK_PRINT.println(httpResponseCode);
+    payload = http.getString();
+    BLYNK_PRINT.println(payload);
+  } else {
+    BLYNK_PRINT.print("Error code: ");
+    BLYNK_PRINT.println(httpResponseCode);
+  }
+  // Free resources
+  http.end();
+
+  return payload;
+}
+
+// This function get server data every 5 seconds.
+void getDataFromServer()
+{
+  if(WiFi.status()== WL_CONNECTED){
+      BLYNK_PRINT.println("getting data...");
+      sensorReadings = httpGETRequest(fluentSupport.c_str());
+      // Deserialize the JSON document
+      DeserializationError error = deserializeJson(doc, sensorReadings);
+
+       // Test if parsing succeeds.
+      if (error) {
+        BLYNK_PRINT.print(F("deserializeJson() failed: "));
+        BLYNK_PRINT.println(error.f_str());
+      } else {
+        // Fetch values.
+        //
+        // Most of the time, you can rely on the implicit casts.
+        // In other case, you can do doc["time"].as<long>();
+        String interactions = doc["interactions"];
+        String responses = doc["responses"];
+
+        if(interactions != "null"){
+          lines[0] = "TICKET:" + interactions;
+        }
+        if(responses != "null"){
+           lines[1] = "REPLY :" + responses;
+        }
+
+        // String lines[] = {"TICKET:045", "REPLY :030", "REVIEW:009"};
+
+        // Print values.
+        BLYNK_PRINT.println(interactions);
+        BLYNK_PRINT.println(responses);
+      }
+    }
+}
+
+void getWorpressReview(){
+  if(WiFi.status()== WL_CONNECTED){
+      BLYNK_PRINT.println("getting wordpress rating...");
+      sensorReadings = httpGETRequest(wordpressRating.c_str());
+      // Deserialize the JSON document
+      DeserializationError error = deserializeJson(doc, sensorReadings);
+
+       // Test if parsing succeeds.
+      if (error) {
+        BLYNK_PRINT.print(F("deserializeJson() failed: "));
+        BLYNK_PRINT.println(error.f_str());
+      } else {
+        // Fetch values.
+        //
+        // Most of the time, you can rely on the implicit casts.
+        // In other case, you can do doc["time"].as<long>();
+        String happy = doc["happy"];
+
+        if(happy != "null"){
+          lines[2] = "REVIEW:" + happy;
+        }
+
+        // String lines[] = {"TICKET:045", "REPLY :030", "REVIEW:009"};
+
+        // Print values.
+        BLYNK_PRINT.println(happy);
+      }
+    }
+}
+
 // Input a value 0 to 255 to get a color value.
 // The colours are a transition r - g - b - back to r.
 // From: https://gist.github.com/davidegironi/3144efdc6d67e5df55438cc3cba613c8
@@ -61,10 +201,6 @@ uint16_t colorWheel(uint8_t pos)
     return dma_display->color565(0, pos * 3, 255 - pos * 3);
   }
 }
-
-String lines[] = {"TICKET:045", "REPLY :030", "REVIEW:009"};
-int scrollShift = 0;
-String scollingText = "";
 
 void drawText(int colorWheelOffset)
 {
@@ -201,36 +337,15 @@ void GIFDraw(GIFDRAW *pDraw)
   }
 } /* GIFDraw() */
 
-const char* ssid     = "Hr Delwar";
-const char* password = "1234567809";
-
 void setup()
 {
+  // Debug console
+  Serial.begin(115200);
+  delay(100);
 
-  Serial.begin(9600);
-  delay(10);
+  BlynkEdgent.begin();
 
-  Serial.println("done...");
-
-  // We start by connecting to a WiFi network
-
-    Serial.println();
-    Serial.println();
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
-
-    WiFi.begin(ssid, password);
-
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-
+  // Blynk.begin(auth, ssid, pass);
 
   // Module configuration
   HUB75_I2S_CFG mxconfig(
@@ -249,53 +364,11 @@ void setup()
   dma_display->setBrightness8(150); //0-255
   dma_display->clearScreen();
 
+  //set timer for every 2 seconds
+  timer.setInterval(11000L, getDataFromServer);
+  timer.setInterval(60000L, getWorpressReview);
 
-  // create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
-  // xTaskCreatePinnedToCore(
-  //     Task1code, /* Task function. */
-  //     "Task1",   /* name of task. */
-  //     10000,     /* Stack size of task */
-  //     NULL,      /* parameter of the task */
-  //     1,         /* priority of the task */
-  //     &Task1,    /* Task handle to keep track of created task */
-  //     0);        /* pin task to core 0 */
-  // delay(500);
-
-  //create a task that will be executed in the Task2code() function, with priority 1 and executed on core 1
-  // xTaskCreatePinnedToCore(
-  //     Task2code, /* Task function. */
-  //     "Task2",   /* name of task. */
-  //     10000,     /* Stack size of task */
-  //     NULL,      /* parameter of the task */
-  //     1,         /* priority of the task */
-  //     &Task2,    /* Task handle to keep track of created task */
-  //     1);        /* pin task to core 1 */
-  // delay(500);
-}
-
-//Task1code: blinks an LED every 1000 ms
-void Task1code(void *pvParameters)
-{
-  for (;;)
-  {
-    
-    delay(500);
-  }
-}
-
-//Task2code: blinks an LED every 700 ms
-void Task2code(void *pvParameters)
-{
-  Serial.print("Task2 running on core ");
-  Serial.println(xPortGetCoreID());
-
-  for (;;)
-  {
-    // animate by going through the colour wheel for the first two lines
-    scrollText(wheelval);
-    wheelval += 1;
-    delay(200);
-  }
+  // Blynk.virtualWrite(V0, "https://raw.githubusercontent.com/blynkkk/blynk-library/master/extras/logo.txt");
 }
 
 void scrollText(int colorWheelOffset)
@@ -329,84 +402,17 @@ void scrollText(int colorWheelOffset)
   }
 }
 
-// Allocate the JSON document
-  //
-  // Inside the brackets, 200 is the capacity of the memory pool in bytes.
-  // Don't forget to change this value to match your JSON document.
-  // Use arduinojson.org/v6/assistant to compute the capacity.
-StaticJsonDocument<200> doc;
-String sensorReadings;
 
 void loop()
 {
-  if(scrollShift > scollingText.length()){
-    scrollShift = 0;
+  BlynkEdgent.run();
+  timer.run();
+
+  if((millis()-lastTime) > 1000){
+    drawText(wheelval);
+    wheelval += 1;
   }
 
-  drawText(wheelval);
-  // scrollText(wheelval);
-  wheelval += 1;
-
-  // if ((millis() - lastTime) > timerDelay) {
-    //Check WiFi connection status
-    if(WiFi.status()== WL_CONNECTED){
-      Serial.println("getting data...");
-      sensorReadings = httpGETRequest(fluentSupport.c_str());
-      // Deserialize the JSON document
-      DeserializationError error = deserializeJson(doc, sensorReadings);
-
-       // Test if parsing succeeds.
-      if (error) {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(error.f_str());
-      } else {
-        // Fetch values.
-        //
-        // Most of the time, you can rely on the implicit casts.
-        // In other case, you can do doc["time"].as<long>();
-        long interactions = doc["interactions"];
-        long responses = doc["responses"];
-
-        // lines[0] = "TI: " + String(interactions);
-        // lines[1] = "TR: " + String(responses);
-
-        // Print values.
-        Serial.println(interactions);
-        Serial.println(responses);
-      }
-    } else {
-      Serial.println("WiFi Disconnected");
-    }
-  // }
-  
   lastTime = millis();
-
-  delay(20);
 }
 
-String httpGETRequest(const char* serverName) {
-  HTTPClient http;
-    
-  // Your Domain name with URL path or IP address with path
-  http.begin(serverName);
-  
-  // Send HTTP POST request
-  int httpResponseCode = http.GET();
-  
-  String payload = "{}"; 
-  
-  if (httpResponseCode>0) {
-    Serial.print("HTTP Response code: ");
-    Serial.println(httpResponseCode);
-    payload = http.getString();
-    Serial.println(payload);
-  }
-  else {
-    Serial.print("Error code: ");
-    Serial.println(httpResponseCode);
-  }
-  // Free resources
-  http.end();
-
-  return payload;
-}
