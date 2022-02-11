@@ -5,10 +5,27 @@
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <AnimatedGIF.h>
+#include <ArduinoJson.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+
 
 #define PANEL_RES_X 64 // Number of pixels wide of each INDIVIDUAL panel module.
 #define PANEL_RES_Y 64 // Number of pixels tall of each INDIVIDUAL panel module.
 #define PANEL_CHAIN 2  // Total number of panels chained one to another
+
+
+//Your Domain name with URL path or IP address with path
+String wordpressRating = "https://fluent-support-iot.vercel.app/api/wordpressrating";
+String fluentSupport = "https://fluent-support-iot.vercel.app/api/iot";
+
+// the following variables are unsigned longs because the time, measured in
+// milliseconds, will quickly become a bigger number than can be stored in an int.
+unsigned long lastTime = 0;
+// Timer set to 10 minutes (600000)
+//unsigned long timerDelay = 600000;
+// Set timer to 5 seconds (5000)
+unsigned long timerDelay = 5000;
 
 //MatrixPanel_I2S_DMA dma_display;
 MatrixPanel_I2S_DMA *dma_display = nullptr;
@@ -45,17 +62,18 @@ uint16_t colorWheel(uint8_t pos)
   }
 }
 
-String lines[] = {"TI:45", "TR:30", "HC:09"};
+String lines[] = {"TICKET:045", "REPLY :030", "REVIEW:009"};
 int scrollShift = 0;
 String scollingText = "";
 
 void drawText(int colorWheelOffset)
 {
+  dma_display->fillRect(0,0, 128, dma_display->height(), 0);
   // draw text with a rotating colour
   dma_display->setTextSize(2);     // size 1 == 8 pixels high
-  dma_display->setTextWrap(false); // Don't wrap at end of line - will do ourselves
+  dma_display->setTextWrap(false); //  Don't wrap at end of line - will do ourselves
 
-  dma_display->setCursor(1, 1); // start at top left, with 8 pixel of spacing
+  dma_display->setCursor(5, 5); // start at top left, with 8 pixel of spacing
   uint8_t w = 0;
 
   String str = lines[0];
@@ -65,13 +83,14 @@ void drawText(int colorWheelOffset)
     dma_display->print(str[w]);
   }
   dma_display->println();
+  dma_display->setCursor(5, 10+16); // start at top left, with 8 pixel of spacing
   String secondLine = lines[1];
   for (w = 0; w < secondLine.length(); w++)
   {
     dma_display->setTextColor(myGREEN);
     dma_display->print(secondLine[w]);
   }
-  dma_display->println();
+  dma_display->setCursor(5, 5+16+10+16); // start at top left, with 8 pixel of spacing
   String thirdLine = lines[2];
   for (w = 0; w < thirdLine.length(); w++)
   {
@@ -182,8 +201,37 @@ void GIFDraw(GIFDRAW *pDraw)
   }
 } /* GIFDraw() */
 
+const char* ssid     = "Hr Delwar";
+const char* password = "1234567809";
+
 void setup()
 {
+
+  Serial.begin(9600);
+  delay(10);
+
+  Serial.println("done...");
+
+  // We start by connecting to a WiFi network
+
+    Serial.println();
+    Serial.println();
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
+
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+
+
   // Module configuration
   HUB75_I2S_CFG mxconfig(
       PANEL_RES_X, // module width
@@ -201,7 +249,8 @@ void setup()
   dma_display->setBrightness8(150); //0-255
   dma_display->clearScreen();
 
-  //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
+
+  // create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
   // xTaskCreatePinnedToCore(
   //     Task1code, /* Task function. */
   //     "Task1",   /* name of task. */
@@ -229,8 +278,8 @@ void Task1code(void *pvParameters)
 {
   for (;;)
   {
-    scrollShift += 1;
-    delay(250);
+    
+    delay(500);
   }
 }
 
@@ -280,6 +329,14 @@ void scrollText(int colorWheelOffset)
   }
 }
 
+// Allocate the JSON document
+  //
+  // Inside the brackets, 200 is the capacity of the memory pool in bytes.
+  // Don't forget to change this value to match your JSON document.
+  // Use arduinojson.org/v6/assistant to compute the capacity.
+StaticJsonDocument<200> doc;
+String sensorReadings;
+
 void loop()
 {
   if(scrollShift > scollingText.length()){
@@ -287,7 +344,69 @@ void loop()
   }
 
   drawText(wheelval);
-  scrollText(wheelval);
+  // scrollText(wheelval);
   wheelval += 1;
+
+  // if ((millis() - lastTime) > timerDelay) {
+    //Check WiFi connection status
+    if(WiFi.status()== WL_CONNECTED){
+      Serial.println("getting data...");
+      sensorReadings = httpGETRequest(fluentSupport.c_str());
+      // Deserialize the JSON document
+      DeserializationError error = deserializeJson(doc, sensorReadings);
+
+       // Test if parsing succeeds.
+      if (error) {
+        Serial.print(F("deserializeJson() failed: "));
+        Serial.println(error.f_str());
+      } else {
+        // Fetch values.
+        //
+        // Most of the time, you can rely on the implicit casts.
+        // In other case, you can do doc["time"].as<long>();
+        long interactions = doc["interactions"];
+        long responses = doc["responses"];
+
+        // lines[0] = "TI: " + String(interactions);
+        // lines[1] = "TR: " + String(responses);
+
+        // Print values.
+        Serial.println(interactions);
+        Serial.println(responses);
+      }
+    } else {
+      Serial.println("WiFi Disconnected");
+    }
+  // }
+  
+  lastTime = millis();
+
   delay(20);
+}
+
+String httpGETRequest(const char* serverName) {
+  HTTPClient http;
+    
+  // Your Domain name with URL path or IP address with path
+  http.begin(serverName);
+  
+  // Send HTTP POST request
+  int httpResponseCode = http.GET();
+  
+  String payload = "{}"; 
+  
+  if (httpResponseCode>0) {
+    Serial.print("HTTP Response code: ");
+    Serial.println(httpResponseCode);
+    payload = http.getString();
+    Serial.println(payload);
+  }
+  else {
+    Serial.print("Error code: ");
+    Serial.println(httpResponseCode);
+  }
+  // Free resources
+  http.end();
+
+  return payload;
 }
